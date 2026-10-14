@@ -1,70 +1,49 @@
-"""Shared helpers for the repo's maintenance scripts. Standard library only."""
+"""Shared helpers for the repo's scripts. Standard library only."""
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO / "skills"
-PLUGIN_JSON = REPO / ".claude-plugin" / "plugin.json"
+AGENTS_DIR = REPO / "agents"
 README = REPO / "README.md"
-CHANGELOG = REPO / "CHANGELOG.md"
-CHANGESET_DIR = REPO / ".changeset"
-
-# Buckets whose skills ship in the plugin and are listed in README.md.
-# Any bucket not listed here as unpromoted is promoted.
-UNPROMOTED_BUCKETS = {"deprecated", "in-progress", "misc"}
 
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-START_MARKER = "<!-- skills:start -->"
-END_MARKER = "<!-- skills:end -->"
+SKILLS_START_MARKER = "<!-- skills:start -->"
+SKILLS_END_MARKER = "<!-- skills:end -->"
+AGENTS_START_MARKER = "<!-- agents:start -->"
+AGENTS_END_MARKER = "<!-- agents:end -->"
+# Every agent body needs this heading: the rules that keep runs independent.
+ISOLATION_HEADING = "## Isolation"
 TODO = "TODO"
 
-
-@dataclass
-class Skill:
-    bucket: str
-    name: str
-    path: Path
-    frontmatter: dict[str, str]
-
-    @property
-    def description(self) -> str:
-        return self.frontmatter.get("description", "")
-
-    @property
-    def user_invoked(self) -> bool:
-        return self.frontmatter.get("disable-model-invocation", "").lower() == "true"
-
-    @property
-    def summary(self) -> str:
-        """First sentence of the description, for README one-liners."""
-        match = re.match(r"(.+?[.!?])(\s|$)", self.description)
-        return match.group(1) if match else self.description
-
-    @property
-    def rel_dir(self) -> str:
-        return self.path.parent.relative_to(REPO).as_posix()
+Frontmatter = dict[str, "str | list[str]"]
 
 
-def parse_frontmatter(text: str) -> dict[str, str]:
-    """Parse the flat `key: value` frontmatter used by SKILL.md files."""
+def parse_frontmatter(text: str) -> tuple[Frontmatter, str]:
+    """Parse flat `key: value` frontmatter, plus `key:` followed by `  - item` lists. Returns (frontmatter, body)."""
     match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     if not match:
-        return {}
-    data = {}
+        return {}, text
+    data: Frontmatter = {}
+    key = None
     for line in match.group(1).splitlines():
+        item = re.match(r"^\s+-\s+(.*)$", line)
+        if item and key is not None:
+            value = data[key]
+            data[key] = (value if isinstance(value, list) else []) + [item.group(1).strip().strip("\"'")]
+            continue
         if ":" not in line or line.startswith((" ", "#")):
             continue
         key, value = line.split(":", 1)
-        value = value.strip()
+        key, value = key.strip(), value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1].replace('\\"', '"')
-        data[key.strip()] = value
-    return data
+        data[key] = value
+    return data, text[match.end() :]
 
 
 def yaml_str(value: str) -> str:
@@ -74,35 +53,64 @@ def yaml_str(value: str) -> str:
     return value
 
 
-def is_promoted(bucket: str) -> bool:
-    return bucket not in UNPROMOTED_BUCKETS
+def first_sentence(text: str) -> str:
+    match = re.match(r"(.+?[.!?])(\s|$)", text)
+    return match.group(1) if match else text
 
 
-def buckets() -> list[str]:
-    return sorted(p.name for p in SKILLS_DIR.iterdir() if p.is_dir())
+@dataclass
+class Skill:
+    name: str
+    path: Path  # skills/<name>/SKILL.md
+    frontmatter: Frontmatter
+
+    @property
+    def dir(self) -> Path:
+        return self.path.parent
+
+    @property
+    def description(self) -> str:
+        value = self.frontmatter.get("description", "")
+        return value if isinstance(value, str) else ""
+
+    @property
+    def user_invoked(self) -> bool:
+        return str(self.frontmatter.get("disable-model-invocation", "")).lower() == "true"
+
+
+@dataclass
+class Agent:
+    name: str
+    path: Path  # agents/<name>/AGENT.md
+    frontmatter: Frontmatter
+    body: str
+
+    @property
+    def description(self) -> str:
+        value = self.frontmatter.get("description", "")
+        return value if isinstance(value, str) else ""
+
+    @property
+    def skills(self) -> list[str]:
+        value = self.frontmatter.get("skills", [])
+        return value if isinstance(value, list) else [v.strip() for v in value.split(",") if v.strip()]
 
 
 def load_skills() -> list[Skill]:
     skills = []
-    for skill_md in sorted(SKILLS_DIR.glob("*/*/SKILL.md")):
-        bucket = skill_md.parent.parent.name
-        fm = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
-        skills.append(Skill(bucket, skill_md.parent.name, skill_md, fm))
+    for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        fm, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+        skills.append(Skill(skill_md.parent.name, skill_md, fm))
     return skills
 
 
-def bucket_title(bucket: str) -> str:
-    readme = SKILLS_DIR / bucket / "README.md"
-    if readme.exists():
-        for line in readme.read_text(encoding="utf-8").splitlines():
-            if line.startswith("# "):
-                return line[2:].strip()
-    return bucket.replace("-", " ").title()
+def load_agents() -> list[Agent]:
+    agents = []
+    for agent_md in sorted(AGENTS_DIR.glob("*/AGENT.md")):
+        fm, body = parse_frontmatter(agent_md.read_text(encoding="utf-8"))
+        agents.append(Agent(agent_md.parent.name, agent_md, fm, body))
+    return agents
 
 
-def read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+def rel(path: Path) -> str:
+    return path.relative_to(REPO).as_posix()
