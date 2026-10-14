@@ -1,0 +1,3 @@
+interface:
+  display_name: "MVP Experiment"
+  short_description: "Scope the smallest MVP that tests one hypothesis"

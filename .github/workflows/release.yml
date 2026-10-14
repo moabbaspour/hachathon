@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check skills are in sync
+        run: python3 scripts/sync_skills.py --check
+
+      - name: Look for pending changesets
+        id: status
+        run: python3 scripts/release.py status
+
+      # Pending changesets: open (or update) the "chore: version skills" PR.
+      - name: Apply changesets
+        id: version
+        if: steps.status.outputs.pending == 'true'
+        run: python3 scripts/release.py version
+
+      - name: Create Version Pull Request
+        if: steps.status.outputs.pending == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: changeset-release/main
+          commit-message: "chore: version skills"
+          title: "chore: version skills"
+          body: "Merging this PR releases v${{ steps.version.outputs.version }}. See `CHANGELOG.md` for what's in it."
+
+      # No pending changesets (e.g. the version PR just merged): tag the version once.
+      - name: Tag release
+        if: steps.status.outputs.pending == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="$(python3 scripts/release.py current)"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version already released"
+          else
+            python3 scripts/release.py notes > notes.md
+            gh release create "v$version" --title "v$version" --notes-file notes.md
+          fi

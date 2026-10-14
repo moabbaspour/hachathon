@@ -1,0 +1,24 @@
+{
+  "name": "moabbaspour-skills",
+  "version": "1.0.0",
+  "description": "Mo Abbaspour's agent skills for hackathons and MVPs: problem discovery, market segmentation, and MVP experiments.",
+  "author": {
+    "name": "Mo Abbaspour",
+    "url": "https://github.com/moabbaspour"
+  },
+  "homepage": "https://github.com/moabbaspour/hackathon",
+  "repository": "https://github.com/moabbaspour/hackathon",
+  "license": "MIT",
+  "keywords": [
+    "hackathon",
+    "mvp",
+    "problem-discovery",
+    "market-segmentation",
+    "skills"
+  ],
+  "skills": [
+    "./skills/hackathon/problem-discovery",
+    "./skills/hackathon/market-segmentation",
+    "./skills/hackathon/mvp-experiment"
+  ]
+}
